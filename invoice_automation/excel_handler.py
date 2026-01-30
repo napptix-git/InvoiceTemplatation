@@ -35,6 +35,13 @@ class ExcelHandler:
     def get_cell_value(self, cell_ref):
         """Get value from a specific cell"""
         try:
+            # support list of cells
+            if isinstance(cell_ref, (list, tuple)):
+                values = []
+                for c in cell_ref:
+                    values.append(self.worksheet[c].value if self.worksheet[c].value is not None else '')
+                # join with newline for multi-line fields
+                return "\n".join(str(v) for v in values).strip()
             return self.worksheet[cell_ref].value
         except Exception as e:
             raise Exception(f"Error reading cell {cell_ref}: {str(e)}")
@@ -42,6 +49,23 @@ class ExcelHandler:
     def set_cell_value(self, cell_ref, value):
         """Set value to a specific cell"""
         try:
+            # support list of cells
+            if isinstance(cell_ref, (list, tuple)):
+                # If value is a string with newlines, split into lines
+                if isinstance(value, str) and "\n" in value:
+                    parts = value.splitlines()
+                # If value is a list/tuple, use it directly
+                elif isinstance(value, (list, tuple)):
+                    parts = [str(v) for v in value]
+                else:
+                    # single scalar: write the same value to all target cells
+                    parts = [value]
+
+                # write parts into cells in order; if fewer parts than cells, fill remaining with empty string
+                for idx, c in enumerate(cell_ref):
+                    v = parts[idx] if idx < len(parts) else ''
+                    self.worksheet[c].value = v
+                return
             self.worksheet[cell_ref].value = value
         except Exception as e:
             raise Exception(f"Error writing to cell {cell_ref}: {str(e)}")
@@ -68,6 +92,7 @@ class ExcelHandler:
                     field_config = INVOICE_FIELDS[field_key]
                     if not field_config.get('read_only', False):
                         cell_ref = field_config['cell']
+                        # For date fields that may be strings, try to keep them as-is; the template will display string
                         self.set_cell_value(cell_ref, value)
         except Exception as e:
             raise Exception(f"Error updating invoice: {str(e)}")
@@ -80,8 +105,22 @@ class ExcelHandler:
                 os.makedirs(OUTPUT_FOLDER)
             
             if output_filename is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_filename = f"Invoice_{timestamp}.xlsx"
+                # Try to use invoice_no from template as filename if present
+                try:
+                    inv_field = INVOICE_FIELDS.get('invoice_no', {})
+                    inv_cell = inv_field.get('cell')
+                    inv_val = None
+                    if inv_cell:
+                        inv_val = self.get_cell_value(inv_cell)
+                    if inv_val:
+                        safe_name = str(inv_val).strip().replace('/', '-').replace('\\\n', '_')
+                        output_filename = f"{safe_name}.xlsx"
+                    else:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        output_filename = f"Invoice_{timestamp}.xlsx"
+                except Exception:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_filename = f"Invoice_{timestamp}.xlsx"
             
             output_path = os.path.join(OUTPUT_FOLDER, output_filename)
             self.workbook.save(output_path)

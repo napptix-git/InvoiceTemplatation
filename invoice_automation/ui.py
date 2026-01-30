@@ -6,7 +6,7 @@ import streamlit as st
 from config import INVOICE_FIELDS
 from excel_handler import ExcelHandler
 from validator import InvoiceValidator
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import calendar
 
 
@@ -202,6 +202,8 @@ with col1:
                 key="vat_amount_display",
                 format="%.2f"
             )
+            # include VAT amount in form data to be written to the sheet
+            form_data['vat_amount'] = st.session_state.calc_vat_amount
         
         # Special handling for total amount (read-only, calculated)
         elif field_key == 'total_amount':
@@ -244,9 +246,24 @@ with col2:
                 errors = st.session_state.validator.get_errors()
                 st.error("**Validation Errors:**\n\n" + "\n".join(f"- {e}" for e in errors))
             else:
-                # Save invoice
+                # Ensure due date is computed as Date + 30 days (if date provided)
+                date_str = form_data.get('date')
+                if date_str:
+                    try:
+                        parsed = datetime.strptime(date_str, "%d/%m/%Y")
+                        due_dt = parsed + timedelta(days=30)
+                        due_str = due_dt.strftime("%d/%m/%Y")
+                        form_data['due_date'] = due_str
+                    except Exception:
+                        # leave due_date as-is if parsing fails
+                        pass
+
+                # Save invoice; filename should be invoice number
+                inv_no = form_data.get('invoice_no') or 'Invoice'
+                safe_name = str(inv_no).strip().replace('/', '-').replace('\\n', '_')
+                filename = f"{safe_name}.xlsx"
                 st.session_state.excel_handler.update_invoice(form_data)
-                output_path = st.session_state.excel_handler.save_invoice()
+                output_path = st.session_state.excel_handler.save_invoice(output_filename=filename)
                 st.success(f"✓ Invoice saved successfully!\n\nLocation: `{output_path}`")
         except Exception as e:
             st.error(f"Error saving invoice: {str(e)}")
