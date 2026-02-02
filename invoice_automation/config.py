@@ -107,9 +107,11 @@ INVOICE_FIELDS = {
 # Header merged cell (B1 across B-F) that contains license/invoice/tax info
 INVOICE_HEADER_CELL = 'B1'
 
-# File paths
-TEMPLATE_FILE = '../Yazle_Invoice_Template_Final.xlsx'
-OUTPUT_FOLDER = './generated_invoices/'
+# File paths (resolve relative to this config file so paths work regardless of CWD)
+import os
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+TEMPLATE_FILE = os.path.abspath(os.path.join(BASE_DIR, '..', 'Yazle_Invoice_Template_Final.xlsx'))
+OUTPUT_FOLDER = os.path.join(BASE_DIR, 'generated_invoices')
 
 # Validation rules
 VALIDATION_RULES = {

@@ -185,7 +185,7 @@ with col1:
                 label=label,
                 value=st.session_state.calc_budget,
                 disabled=True,
-                key=f"field_{field_key}",
+                key=f"display_{field_key}",
                 format="%.2f"
             )
             form_data[field_key] = st.session_state.calc_budget
@@ -235,12 +235,12 @@ with col1:
         # Special handling for total amount (read-only, calculated)
         if field_key == 'total_amount':
             st.session_state.calc_total_amount = st.session_state.calc_budget + st.session_state.calc_vat_amount
-            st.number_input(
+            # Render total as a disabled text field formatted to two decimals so it shows as 0.00
+            st.text_input(
                 label=field_config['label'],
-                value=st.session_state.calc_total_amount,
+                value=f"{st.session_state.calc_total_amount:.2f}",
                 disabled=True,
-                key=f"field_{field_key}",
-                format="%.2f"
+                key=f"display_{field_key}",
             )
             form_data[field_key] = st.session_state.calc_total_amount
 
