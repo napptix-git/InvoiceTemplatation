@@ -8,7 +8,6 @@ from config import INVOICE_FIELDS
 from excel_handler import ExcelHandler
 from validator import InvoiceValidator
 from client_manager import ClientManager
-from bo_pdf_parser import BOPDFParser
 from datetime import datetime, date, timedelta
 import calendar
 import math
@@ -25,15 +24,7 @@ st.set_page_config(
 st.title("📄 Invoice Template Editor")
 st.markdown("---")
 
-# File uploader for BO (Business Order) files at the top
-st.subheader("📤 Upload Business Order (BO)")
-bo_file = st.file_uploader(
-    "Drag and drop or click to upload BO file (CSV, Excel or PDF)",
-    type=["csv", "xlsx", "xls", "pdf"],
-    help="Upload a BO file to auto-populate invoice fields"
-)
-
-# Initialize session state
+# BO drag-and-drop upload removed per user request.
 if 'excel_handler' not in st.session_state:
     st.session_state.excel_handler = ExcelHandler()
     st.session_state.validator = InvoiceValidator()
@@ -44,163 +35,6 @@ if 'excel_handler' not in st.session_state:
     except Exception as e:
         st.error(f"Error loading template: {str(e)}")
         st.stop()
-
-# Initialize fields that were auto-populated from BO
-if 'auto_populated_fields' not in st.session_state:
-    st.session_state.auto_populated_fields = set()
-
-# Initialize fields with multiple values (line items)
-if 'line_items' not in st.session_state:
-    st.session_state.line_items = []
-
-# Process uploaded BO file
-if bo_file is not None:
-    try:
-        fname = bo_file.name.lower()
-        # Handle CSV / Excel
-        if fname.endswith('.csv') or fname.endswith('.xls') or fname.endswith('.xlsx'):
-            import pandas as pd
-            if fname.endswith('.csv'):
-                bo_data = pd.read_csv(bo_file)
-            else:
-                bo_data = pd.read_excel(bo_file)
-
-            # Auto-map common column names to invoice fields
-            bo_mapping = {
-                'client_name': ['Client Name', 'client', 'customer', 'company'],
-                'client_address': ['Address', 'client_address', 'address'],
-                'client_trn': ['TRN', 'trn', 'tax_id', 'vat'],
-                'bo_no': ['BO Number', 'bo_no', 'order_no', 'order_number', 'po_no'],
-                'description': ['Description', 'item', 'product', 'details'],
-                'quantity': ['Quantity', 'qty', 'units', 'volume'],
-                'rate': ['Rate', 'unit_price', 'price', 'unit_cost', 'amount'],
-                'delivery_month': ['Delivery Month', 'delivery', 'month'],
-            }
-
-            # Extract and populate fields
-            bo_values = {}
-            for field_key, column_names in bo_mapping.items():
-                for col in column_names:
-                    if col in bo_data.columns:
-                        value = bo_data[col].iloc[0]
-                        bo_values[field_key] = value
-                        st.session_state.auto_populated_fields.add(field_key)
-                        break
-
-            # Store in session state for form population
-            if bo_values:
-                st.session_state.bo_values = bo_values
-                st.success(f"✓ BO file loaded! Found {len(bo_values)} field(s). Form will be populated below.")
-
-        # Handle PDF uploads with advanced parsing
-        elif fname.endswith('.pdf'):
-            try:
-                # read raw bytes
-                content = bo_file.read()
-                # Try PyPDF2 or pypdf for text extraction
-                PdfReader = None
-                try:
-                    from PyPDF2 import PdfReader
-                    PdfReader = PdfReader
-                except Exception:
-                    try:
-                        from pypdf import PdfReader
-                        PdfReader = PdfReader
-                    except Exception:
-                        PdfReader = None
-
-                if PdfReader is None:
-                    st.session_state.bo_file_bytes = content
-                    st.warning("PDF uploaded but PDF parsing library (PyPDF2/pypdf) is not installed. File accepted but auto-parsing is unavailable.")
-                else:
-                    reader = PdfReader(BytesIO(content))
-                    text_parts = []
-                    # extract text from up to first 5 pages
-                    for i, p in enumerate(reader.pages):
-                        if i >= 5:
-                            break
-                        try:
-                            t = p.extract_text() or ''
-                        except Exception:
-                            t = ''
-                        text_parts.append(t)
-                    extracted = "\n\n".join(text_parts).strip()
-                    st.session_state.bo_text = extracted
-                    
-                    # Parse BO data using advanced parser
-                    parser = BOPDFParser(extracted)
-                    bo_parsed_data = parser.extract_all_data()
-                    
-                    # Prepare bo_values from parsed data
-                    bo_values = {}
-                    if bo_parsed_data.get('bo_no'):
-                        bo_values['bo_no'] = bo_parsed_data['bo_no']
-                        st.session_state.auto_populated_fields.add('bo_no')
-                    if bo_parsed_data.get('client_name'):
-                        bo_values['client_name'] = bo_parsed_data['client_name']
-                        st.session_state.auto_populated_fields.add('client_name')
-                    if bo_parsed_data.get('client_trn'):
-                        bo_values['client_trn'] = bo_parsed_data['client_trn']
-                        st.session_state.auto_populated_fields.add('client_trn')
-                    
-                    # Handle line items (multiple descriptions, quantities, rates)
-                    if bo_parsed_data.get('descriptions'):
-                        line_items = []
-                        descriptions = bo_parsed_data['descriptions']
-                        quantities = bo_parsed_data['quantities']
-                        rates = bo_parsed_data['rates']
-                        
-                        max_items = max(len(descriptions), len(quantities), len(rates))
-                        for i in range(max_items):
-                            item = {
-                                'description': descriptions[i] if i < len(descriptions) else '',
-                                'quantity': quantities[i] if i < len(quantities) else None,
-                                'rate': rates[i] if i < len(rates) else None,
-                            }
-                            line_items.append(item)
-                        
-                        st.session_state.line_items = line_items
-                        
-                        # Use first line item as main entry
-                        if line_items:
-                            if line_items[0]['description']:
-                                bo_values['description'] = line_items[0]['description']
-                                st.session_state.auto_populated_fields.add('description')
-                            if line_items[0]['quantity'] is not None:
-                                bo_values['quantity'] = line_items[0]['quantity']
-                                st.session_state.auto_populated_fields.add('quantity')
-                            if line_items[0]['rate'] is not None:
-                                bo_values['rate'] = line_items[0]['rate']
-                                st.session_state.auto_populated_fields.add('rate')
-                    
-                    if bo_values:
-                        st.session_state.bo_values = bo_values
-                        st.success(f"✓ PDF uploaded and parsed! Auto-populated {len(bo_values)} field(s).")
-                        
-                        # Show extracted data for review
-                        with st.expander("📋 View Extracted BO Data"):
-                            st.write("**BO Number:**", bo_parsed_data.get('bo_no') or "Not found")
-                            st.write("**Client Name:**", bo_parsed_data.get('client_name') or "Not found")
-                            st.write("**Client TRN:**", bo_parsed_data.get('client_trn') or "Not found")
-                            
-                            if st.session_state.line_items:
-                                st.write("**Line Items:**")
-                                for idx, item in enumerate(st.session_state.line_items, 1):
-                                    st.write(f"  Item {idx}:")
-                                    st.write(f"    - Description: {item['description']}")
-                                    st.write(f"    - Quantity: {item['quantity']}")
-                                    st.write(f"    - Rate: {item['rate']}")
-                    else:
-                        st.warning("PDF extracted but no structured BO data found. Please fill fields manually.")
-
-            except Exception as e:
-                st.error(f"Error processing PDF file: {str(e)}")
-
-        else:
-            st.error("Unsupported file type. Please upload CSV, Excel, or PDF files.")
-
-    except Exception as e:
-        st.error(f"Error processing BO file: {str(e)}")
 
 # Initialize calculation fields in session state
 if 'calc_quantity' not in st.session_state:
@@ -222,6 +56,24 @@ col1, col2 = st.columns([3, 1])
 with col1:
     st.subheader("Invoice Details")
     
+    # Callback functions for date/delivery month pickers
+    def apply_date_callback():
+        """Callback to apply selected date before widget re-renders"""
+        day = st.session_state.get('date_day', 1)
+        month = st.session_state.get('date_month', 1)
+        year = st.session_state.get('date_year', 2026)
+        selected_date = f"{day:02d}/{month:02d}/{year:04d}"
+        st.session_state['field_date'] = selected_date
+        st.session_state.show_date_picker = False
+    
+    def apply_delivery_month_callback():
+        """Callback to apply selected delivery month before widget re-renders"""
+        month = st.session_state.get('delivery_month_select', 1)
+        year = st.session_state.get('delivery_year_select', 2026)
+        selected_date = f"{month:02d}/{year}"
+        st.session_state['field_delivery_month'] = selected_date
+        st.session_state.show_delivery_picker = False
+    
     # Create form fields
     form_data = {}
     
@@ -238,30 +90,31 @@ with col1:
         if current_value is None:
             current_value = ''
         
-        # Check if this field was auto-populated from BO
-        is_auto_populated = field_key in st.session_state.auto_populated_fields
+        # We do not auto-populate fields from BO uploads; keep all fields editable.
+        is_auto_populated = False
         
-        # Special handling for invoice_no with prefix
+        # Special handling for invoice_no with prefix - Auto-generated, non-editable
         if field_key == 'invoice_no':
+            # Get next invoice number from ClientManager
+            if 'current_invoice_number' not in st.session_state:
+                st.session_state.current_invoice_number = st.session_state.client_manager.get_next_invoice_number()
+            
             st.markdown("**Invoice No.**")
             col_prefix, col_number = st.columns([0.4, 0.6])
             with col_prefix:
                 st.text_input("Prefix", value="INV-FY2526-", disabled=True, key="invoice_prefix")
             with col_number:
-                # Check for BO values first; do not prefill with template invoice number
-                bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
-                inv_val = str(current_value).replace("INV-FY2526-", "") if current_value else ""
-                # Use BO value as the input value; otherwise keep the field empty and show template as placeholder
-                invoice_number = st.text_input(
+                # Display auto-generated number (non-editable)
+                auto_invoice_num = st.session_state.current_invoice_number
+                st.text_input(
                     "Number",
-                    value=bo_val or "",
-                    placeholder=inv_val or "e.g., 001",
-                    key=f"field_{field_key}",
-                    disabled=is_auto_populated  # Make read-only if auto-populated
+                    value=auto_invoice_num,
+                    disabled=True,  # Non-editable
+                    key=f"field_{field_key}"
                 )
-                form_data[field_key] = (f"INV-FY2526-{invoice_number}" if str(invoice_number).strip() else "")
+                form_data[field_key] = f"INV-FY2526-{auto_invoice_num}"
         
-        # Special handling for client_name with dropdown
+        # Special handling for client_name with dropdown and auto-address population
         elif field_key == 'client_name':
             st.markdown("**Client Name**")
             
@@ -270,25 +123,18 @@ with col1:
             with col_dropdown:
                 # Get all clients
                 all_clients = st.session_state.client_manager.get_all_clients()
-                bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
-                
-                # If BO value exists, add it to the list if not already there
-                if bo_val and bo_val not in all_clients:
-                    all_clients = [bo_val] + all_clients
-                
-                # Set default index
-                default_idx = 0
-                if bo_val and bo_val in all_clients:
-                    default_idx = all_clients.index(bo_val)
-                
                 selected_client = st.selectbox(
                     label=label,
                     options=all_clients,
-                    index=default_idx,
-                    key=f"field_{field_key}",
-                    disabled=is_auto_populated  # Make read-only if auto-populated
+                    index=0,
+                    key=f"field_{field_key}"
                 )
                 form_data[field_key] = selected_client
+                
+                # Auto-populate client address when client is selected
+                client_address = st.session_state.client_manager.get_client_address(selected_client)
+                if client_address:
+                    st.session_state['auto_client_address'] = client_address
             
             with col_add:
                 if st.button("➕ Add Client", key="add_client_btn", help="Add new client", use_container_width=True):
@@ -302,12 +148,17 @@ with col1:
                     key="new_client_input",
                     placeholder="e.g., New Company Name"
                 )
+                new_address = st.text_input(
+                    "Enter client address:",
+                    key="new_client_address_input",
+                    placeholder="e.g., Dubai Business Park, Dubai, UAE"
+                )
                 col_save, col_cancel = st.columns(2)
                 with col_save:
                     if st.button("Save Client", key="save_client_btn"):
                         if new_client and new_client.strip():
                             try:
-                                st.session_state.client_manager.add_custom_client(new_client)
+                                st.session_state.client_manager.add_custom_client(new_client, new_address)
                                 st.session_state.show_add_client = False
                                 st.success(f"✓ Client '{new_client}' added successfully!")
                                 st.rerun()
@@ -320,22 +171,38 @@ with col1:
                         st.session_state.show_add_client = False
                         st.rerun()
         
+        # Special handling for client_address - Auto-populated from selected client
+        elif field_key == 'client_address':
+            # Get auto-populated address from session state (set when client is selected)
+            auto_address = st.session_state.get('auto_client_address', '')
+            st.markdown("**Client Address** (Auto-populated)")
+            address_input = st.text_area(
+                label=label,
+                value=auto_address or st.session_state.get(f"field_{field_key}", ""),
+                placeholder="Address will auto-populate when you select a client",
+                key=f"field_{field_key}",
+                height=60,
+            )
+            form_data[field_key] = address_input
+        
         # Special handling for date - add calendar picker
         elif field_key == 'date':
             st.markdown("**Date**")
             col_input, col_button = st.columns([0.8, 0.2])
             with col_input:
-                # Use temp_date if it was set from picker; otherwise show template value as placeholder
-                temp_date = st.session_state.get('temp_date')
-                placeholder_val = str(current_value) if current_value else "DD/MM/YYYY"
-                date_input = st.text_input(
+                # Initialize session state for date if not present - ensure it's a string
+                if f"field_{field_key}" not in st.session_state:
+                    st.session_state[f"field_{field_key}"] = str(current_value) if current_value else ""
+                
+                # Display the text input - Streamlit manages state via key parameter
+                st.text_input(
                     label="Select Date",
-                    value=temp_date or "",
                     key=f"field_{field_key}",
-                    placeholder=placeholder_val,
-                    disabled=is_auto_populated  # Make read-only if auto-populated
+                    placeholder="DD/MM/YYYY",
                 )
-                form_data[field_key] = date_input
+                # Get value from session state for form_data
+                form_data[field_key] = st.session_state.get(f"field_{field_key}", "")
+            
             with col_button:
                 if st.button("📅", key="date_picker_btn", help="Pick Date", use_container_width=True):
                     st.session_state.show_date_picker = True
@@ -350,29 +217,26 @@ with col1:
                 with picker_col3:
                     year = st.number_input("Year", min_value=2020, max_value=2100, value=datetime.now().year, key="date_year")
                 
-                if st.button("Apply Date", key="apply_date_btn"):
-                    selected_date = f"{day:02d}/{month:02d}/{year:04d}"
-                    st.session_state.temp_date = selected_date
-                    st.session_state.show_date_picker = False
-                    st.rerun()
+                st.button("Apply Date", key="apply_date_btn", on_click=apply_date_callback)
         
         # Special handling for delivery_month - add calendar picker
         elif field_key == 'delivery_month':
             st.markdown("**Delivery Month**")
             col_input, col_button = st.columns([0.8, 0.2])
             with col_input:
-                # Check BO values first, then temp, then template
-                bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
-                temp_delivery = st.session_state.get('temp_delivery_month')
-                placeholder_dm = str(current_value) if current_value else "MM/YYYY"
-                delivery_month_input = st.text_input(
+                # Initialize session state for delivery month if not present - ensure it's a string
+                if f"field_{field_key}" not in st.session_state:
+                    st.session_state[f"field_{field_key}"] = str(current_value) if current_value else ""
+                
+                # Display the text input - Streamlit manages state via key parameter
+                st.text_input(
                     label="Select Month",
-                    value=bo_val or temp_delivery or "",
                     key=f"field_{field_key}",
-                    placeholder=placeholder_dm if not (bo_val or temp_delivery) else "",
-                    disabled=is_auto_populated  # Make read-only if auto-populated
+                    placeholder="MM/YYYY",
                 )
-                form_data[field_key] = delivery_month_input
+                # Get value from session state for form_data
+                form_data[field_key] = st.session_state.get(f"field_{field_key}", "")
+            
             with col_button:
                 if st.button("📅", key="delivery_calendar", help="Select Month and Year", use_container_width=True):
                     st.session_state.show_delivery_picker = True
@@ -385,22 +249,16 @@ with col1:
                 with picker_col2:
                     year = st.number_input("Year", min_value=2020, max_value=2100, value=datetime.now().year, key="delivery_year_select")
                 
-                if st.button("Apply Month", key="apply_delivery_month_btn"):
-                    selected_date = f"{month:02d}/{year}"
-                    st.session_state.temp_delivery_month = selected_date
-                    st.session_state.show_delivery_picker = False
-                    st.rerun()
+                st.button("Apply Month", key="apply_delivery_month_btn", on_click=apply_delivery_month_callback)
         
         # Special handling for quantity (show template as placeholder, accept numeric input)
         elif field_key == 'quantity':
-            bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
             placeholder_qty = str(int(float(current_value or 0))) if current_value else ""
             qty_input = st.text_input(
                 label=label,
-                value=str(bo_val) if bo_val else "",
-                placeholder=placeholder_qty if not bo_val else "",
+                value=str(st.session_state.get(f"field_{field_key}", "")),
+                placeholder=placeholder_qty,
                 key=f"field_{field_key}",
-                disabled=is_auto_populated  # Make read-only if auto-populated
             )
             try:
                 quantity_val = int(float(qty_input)) if str(qty_input).strip() != '' else 0
@@ -411,14 +269,12 @@ with col1:
         
         # Special handling for rate (show template as placeholder, accept numeric input)
         elif field_key == 'rate':
-            bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
             placeholder_rate = str(float(current_value)) if current_value else ""
             rate_input = st.text_input(
                 label=label,
-                value=str(bo_val) if bo_val else "",
-                placeholder=placeholder_rate if not bo_val else "",
+                value=str(st.session_state.get(f"field_{field_key}", "")),
+                placeholder=placeholder_rate,
                 key=f"field_{field_key}",
-                disabled=is_auto_populated  # Make read-only if auto-populated
             )
             try:
                 rate_val = float(rate_input) if str(rate_input).strip() != '' else 0.0
@@ -429,41 +285,35 @@ with col1:
         
         # Special handling for description
         elif field_key == 'description':
-            bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
             placeholder_desc = str(current_value) if current_value else ""
             desc_input = st.text_area(
                 label=label,
-                value=bo_val or "",
-                placeholder=placeholder_desc if not bo_val else "",
+                value=st.session_state.get(f"field_{field_key}", ""),
+                placeholder=placeholder_desc,
                 key=f"field_{field_key}",
                 height=80,
-                disabled=is_auto_populated  # Make read-only if auto-populated
             )
             form_data[field_key] = desc_input
         
         # Special handling for BO No
         elif field_key == 'bo_no':
-            bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
             placeholder_bo = str(current_value) if current_value else ""
             bo_no_input = st.text_input(
                 label=label,
-                value=bo_val or "",
-                placeholder=placeholder_bo if not bo_val else "",
+                value=st.session_state.get(f"field_{field_key}", ""),
+                placeholder=placeholder_bo,
                 key=f"field_{field_key}",
-                disabled=is_auto_populated  # Make read-only if auto-populated
             )
             form_data[field_key] = bo_no_input
         
         # Special handling for Client TRN
         elif field_key == 'client_trn':
-            bo_val = st.session_state.get('bo_values', {}).get(field_key, '')
             placeholder_trn = str(current_value) if current_value else ""
             trn_input = st.text_input(
                 label=label,
-                value=bo_val or "",
-                placeholder=placeholder_trn if not bo_val else "",
+                value=st.session_state.get(f"field_{field_key}", ""),
+                placeholder=placeholder_trn,
                 key=f"field_{field_key}",
-                disabled=is_auto_populated  # Make read-only if auto-populated
             )
             form_data[field_key] = trn_input
         
@@ -548,12 +398,12 @@ with col1:
         pass
     
     # Show line items if multiple exist
-    if st.session_state.line_items:
+    if st.session_state.get('line_items'):
         st.markdown("---")
         st.subheader("📋 Additional Line Items (from BO)")
-        st.info(f"Found {len(st.session_state.line_items)} line item(s) in the BO. First item is shown above.")
+        st.info(f"Found {len(st.session_state.get('line_items'))} line item(s) in the BO. First item is shown above.")
         with st.expander("View all line items", expanded=False):
-            for idx, item in enumerate(st.session_state.line_items[1:], 2):
+            for idx, item in enumerate(st.session_state.get('line_items')[1:], 2):
                 st.write(f"**Item {idx}:**")
                 st.write(f"- Description: {item['description']}")
                 st.write(f"- Quantity: {item['quantity']}")
@@ -640,6 +490,11 @@ with col2:
 
                 st.session_state.excel_handler.update_invoice(excel_data)
                 output_path = st.session_state.excel_handler.save_invoice(output_filename=filename)
+                
+                # Increment invoice number after successful save
+                st.session_state.client_manager.increment_invoice_number()
+                st.session_state.current_invoice_number = st.session_state.client_manager.get_next_invoice_number()
+                
                 st.success(f"✓ Invoice saved successfully!\n\nLocation: `{output_path}`")
         except Exception as e:
             st.error(f"Error saving invoice: {str(e)}")
@@ -657,6 +512,7 @@ with col2:
         st.session_state.calc_vat_amount = 0.0
         st.session_state.calc_total_amount = 0.0
         st.session_state.auto_populated_fields = set()
+        st.session_state.auto_client_address = ""
         st.session_state.line_items = []
         st.rerun()
 
